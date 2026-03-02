@@ -1,3 +1,15 @@
+// ==============================
+// USER CONFIG (EDIT HERE ONLY)
+// ==============================
+const CONFIG = {
+  codeforces: "Your Handle",
+  leetcode: "Your Handle",
+  atcoder: "Your Handle"
+};
+
+// ==============================
+// ATCODER DIFFICULTY CACHE
+// ==============================
 let atcoderDiffCache = null;
 
 function fetchAtcoderDifficulty(problemId){
@@ -17,20 +29,25 @@ function fetchAtcoderDifficulty(problemId){
   return difficulty;
 }
 
+// ==============================
+// MAIN UPDATE FUNCTION
+// ==============================
 function updateAllPlatforms() {
 
-  const sheetName = "MOHAMED AAQIL M _AI_ENGG";
+  const sheetName = "Model sheet";
   const spreadsheetId = "1VKV9kIzNWpXArqZXlg6xTK3OgvFiqumf9UCqlna2iJA";
   const sheet = SpreadsheetApp.openById(spreadsheetId).getSheetByName(sheetName);
 
+  updateCodeforcesRating(sheet);
+  updateAtcoderRating(sheet);
+  updateLeetcodeRating(sheet);
+
   let allSubmissions = [];
 
-  // ===== FETCH FROM PLATFORMS =====
   allSubmissions = allSubmissions.concat(fetchCodeforces());
   allSubmissions = allSubmissions.concat(fetchLeetcode());
   allSubmissions = allSubmissions.concat(fetchAtcoder());
 
-  // ===== KEEP LATEST SUBMISSION PER PROBLEM =====
   const latestMap = {};
   allSubmissions.forEach(sub => {
     const key = sub.platform + "_" + sub.title;
@@ -40,11 +57,8 @@ function updateAllPlatforms() {
   });
 
   allSubmissions = Object.values(latestMap);
-
-  // ===== SORT BY DATE =====
   allSubmissions.sort((a,b)=> new Date(a.date) - new Date(b.date));
 
-  // ===== DUPLICATE PREVENTION =====
   const existingLinks = sheet
     .getRange("C:C")
     .getValues()
@@ -82,9 +96,12 @@ function updateAllPlatforms() {
   });
 }
 
+// ==============================
+// CODEFORCES SUBMISSIONS
+// ==============================
 function fetchCodeforces(){
 
-  const handle = "Aaqil_07";
+  const handle = CONFIG.codeforces;
   let arr = [];
 
   const url = "https://codeforces.com/api/user.status?handle=" + handle;
@@ -120,9 +137,53 @@ function fetchCodeforces(){
   return arr;
 }
 
+// ==============================
+// LEETCODE DIFFICULTY FETCH
+// ==============================
+function fetchLeetcodeDifficulty(titleSlug){
+
+  const url = "https://leetcode.com/graphql";
+
+  const query = {
+    query: `
+      query getQuestion($titleSlug: String!) {
+        question(titleSlug: $titleSlug) {
+          difficulty
+        }
+      }
+    `,
+    variables: { titleSlug: titleSlug }
+  };
+
+  const options = {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(query),
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      "Referer": "https://leetcode.com",
+      "Origin": "https://leetcode.com"
+    },
+    muteHttpExceptions: true
+  };
+
+  const response = UrlFetchApp.fetch(url, options);
+  const text = response.getContentText();
+
+  if(text.startsWith("<!DOCTYPE")){
+    return "Unknown";
+  }
+
+  const data = JSON.parse(text);
+  return data.data.question.difficulty;
+}
+
+// ==============================
+// LEETCODE SUBMISSIONS
+// ==============================
 function fetchLeetcode(){
 
-  const username = "Aaqil_2007";
+  const username = CONFIG.leetcode;
   let arr = [];
 
   const url = "https://leetcode.com/graphql";
@@ -133,6 +194,7 @@ function fetchLeetcode(){
         recentSubmissionList(username: $username, limit: 100) {
           id
           title
+          titleSlug
           statusDisplay
           timestamp
         }
@@ -157,7 +219,6 @@ function fetchLeetcode(){
   const text = response.getContentText();
 
   if(text.startsWith("<!DOCTYPE")){
-    Logger.log("LeetCode blocked request — skipping");
     return arr;
   }
 
@@ -168,11 +229,13 @@ function fetchLeetcode(){
 
     if(sub.statusDisplay === "Accepted"){
 
+      const difficulty = fetchLeetcodeDifficulty(sub.titleSlug);
+
       arr.push({
         date: new Date(sub.timestamp*1000),
         title: sub.title,
         link: "https://leetcode.com/submissions/detail/" + sub.id,
-        difficulty: "Medium",
+        difficulty: difficulty,
         platform: "Leetcode"
       });
     }
@@ -181,9 +244,12 @@ function fetchLeetcode(){
   return arr;
 }
 
+// ==============================
+// ATCODER SUBMISSIONS
+// ==============================
 function fetchAtcoder(){
 
-  const username = "Aaqil";
+  const username = CONFIG.atcoder;
   let arr = [];
 
   const url =
@@ -209,4 +275,105 @@ function fetchAtcoder(){
   });
 
   return arr;
+}
+
+// ==============================
+// CODEFORCES RATING
+// ==============================
+function updateCodeforcesRating(sheet){
+
+  const handle = CONFIG.codeforces;
+  const url = "https://codeforces.com/api/user.info?handles=" + handle;
+
+  const response = UrlFetchApp.fetch(url);
+  const data = JSON.parse(response.getContentText());
+
+  const rating = data.result[0].rating || "Unrated";
+  sheet.getRange("F6").setValue(rating);
+}
+
+// ==============================
+// ATCODER RATING
+// ==============================
+function updateAtcoderRating(sheet){
+
+  const username = CONFIG.atcoder;
+  const url = "https://atcoder.jp/users/" + username;
+
+  const response = UrlFetchApp.fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0" },
+    muteHttpExceptions: true
+  });
+
+  if(response.getResponseCode() !== 200){
+    sheet.getRange("F5").setValue("Unrated");
+    return;
+  }
+
+  const html = response.getContentText();
+
+  const match = html.match(/Rating[\s\S]*?(\d+)\s*\(Provisional\)|Rating[\s\S]*?>(\d+)</);
+
+  if(match){
+    const rating = match[1] || match[2];
+    sheet.getRange("F5").setValue(parseInt(rating));
+  } else {
+    sheet.getRange("F5").setValue("Unrated");
+  }
+}
+
+// ==============================
+// LEETCODE RATING
+// ==============================
+function updateLeetcodeRating(sheet){
+
+  const username = CONFIG.leetcode;
+
+  const url = "https://leetcode.com/graphql";
+
+  const query = {
+    query: `
+      query getUserContestRanking($username: String!) {
+        userContestRanking(username: $username) {
+          rating
+        }
+      }
+    `,
+    variables: { username: username }
+  };
+
+  const options = {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(query),
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      "Referer": "https://leetcode.com",
+      "Origin": "https://leetcode.com"
+    },
+    muteHttpExceptions: true
+  };
+
+  const response = UrlFetchApp.fetch(url, options);
+
+  if(response.getResponseCode() !== 200){
+    sheet.getRange("F4").setValue("Unrated");
+    return;
+  }
+
+  const text = response.getContentText();
+
+  if(text.startsWith("<!DOCTYPE")){
+    sheet.getRange("F4").setValue("Unrated");
+    return;
+  }
+
+  const data = JSON.parse(text);
+  const ranking = data.data.userContestRanking;
+
+  if(!ranking || !ranking.rating){
+    sheet.getRange("F4").setValue("Unrated");
+  } else {
+    sheet.getRange("F4").setValue(Math.round(ranking.rating));
+  }
 }
