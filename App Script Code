@@ -1,0 +1,212 @@
+let atcoderDiffCache = null;
+
+function fetchAtcoderDifficulty(problemId){
+
+  if(!atcoderDiffCache){
+    const url = "https://kenkoooo.com/atcoder/resources/problem-models.json";
+    const response = UrlFetchApp.fetch(url);
+    atcoderDiffCache = JSON.parse(response.getContentText());
+  }
+
+  const diff = atcoderDiffCache[problemId]?.difficulty || 0;
+
+  let difficulty = "Easy";
+  if(diff >= 1200 && diff < 2000) difficulty = "Medium";
+  if(diff >= 2000) difficulty = "Hard";
+
+  return difficulty;
+}
+
+function updateAllPlatforms() {
+
+  const sheetName = "MOHAMED AAQIL M _AI_ENGG";
+  const spreadsheetId = "1VKV9kIzNWpXArqZXlg6xTK3OgvFiqumf9UCqlna2iJA";
+  const sheet = SpreadsheetApp.openById(spreadsheetId).getSheetByName(sheetName);
+
+  let allSubmissions = [];
+
+  // ===== FETCH FROM PLATFORMS =====
+  allSubmissions = allSubmissions.concat(fetchCodeforces());
+  allSubmissions = allSubmissions.concat(fetchLeetcode());
+  allSubmissions = allSubmissions.concat(fetchAtcoder());
+
+  // ===== KEEP LATEST SUBMISSION PER PROBLEM =====
+  const latestMap = {};
+  allSubmissions.forEach(sub => {
+    const key = sub.platform + "_" + sub.title;
+    if(!latestMap[key] || new Date(sub.date) > new Date(latestMap[key].date)){
+      latestMap[key] = sub;
+    }
+  });
+
+  allSubmissions = Object.values(latestMap);
+
+  // ===== SORT BY DATE =====
+  allSubmissions.sort((a,b)=> new Date(a.date) - new Date(b.date));
+
+  // ===== DUPLICATE PREVENTION =====
+  const existingLinks = sheet
+    .getRange("C:C")
+    .getValues()
+    .flat()
+    .map(x => String(x).trim());
+
+  const existingSet = new Set(existingLinks);
+
+  allSubmissions.forEach(sub => {
+
+    const link = String(sub.link).trim();
+
+    if(!existingSet.has(link)){
+
+      const onlyDate = Utilities.formatDate(
+        new Date(sub.date),
+        Session.getScriptTimeZone(),
+        "yyyy-MM-dd"
+      );
+
+      sheet.appendRow([
+        onlyDate,
+        sub.title,
+        link,
+        sub.difficulty,
+        sub.platform
+      ]);
+
+      existingSet.add(link);
+
+      const lastRow = sheet.getLastRow();
+      sheet.getRange(lastRow,1).setHorizontalAlignment("center");
+      sheet.getRange(lastRow,1).setNumberFormat("yyyy-mm-dd");
+    }
+  });
+}
+
+function fetchCodeforces(){
+
+  const handle = "Aaqil_07";
+  let arr = [];
+
+  const url = "https://codeforces.com/api/user.status?handle=" + handle;
+  const response = UrlFetchApp.fetch(url);
+  const data = JSON.parse(response.getContentText());
+
+  data.result.forEach(sub => {
+
+    if(sub.verdict === "OK"){
+
+      const submissionLink =
+        "https://codeforces.com/contest/" +
+        sub.contestId +
+        "/submission/" +
+        sub.id;
+
+      const rating = sub.problem.rating || 0;
+
+      let difficulty = "Easy";
+      if (rating >= 1200 && rating < 1800) difficulty = "Medium";
+      if (rating >= 1800) difficulty = "Hard";
+
+      arr.push({
+        date: new Date(sub.creationTimeSeconds*1000),
+        title: sub.problem.name,
+        link: submissionLink,
+        difficulty: difficulty,
+        platform: "Codeforces Contest"
+      });
+    }
+  });
+
+  return arr;
+}
+
+function fetchLeetcode(){
+
+  const username = "Aaqil_2007";
+  let arr = [];
+
+  const url = "https://leetcode.com/graphql";
+
+  const query = {
+    query: `
+      query recentSubmissionList($username: String!) {
+        recentSubmissionList(username: $username, limit: 100) {
+          id
+          title
+          statusDisplay
+          timestamp
+        }
+      }
+    `,
+    variables: { username: username }
+  };
+
+  const options = {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(query),
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      "Referer": "https://leetcode.com",
+      "Origin": "https://leetcode.com"
+    },
+    muteHttpExceptions: true
+  };
+
+  const response = UrlFetchApp.fetch(url, options);
+  const text = response.getContentText();
+
+  if(text.startsWith("<!DOCTYPE")){
+    Logger.log("LeetCode blocked request — skipping");
+    return arr;
+  }
+
+  const data = JSON.parse(text);
+  const submissions = data.data.recentSubmissionList;
+
+  submissions.forEach(sub => {
+
+    if(sub.statusDisplay === "Accepted"){
+
+      arr.push({
+        date: new Date(sub.timestamp*1000),
+        title: sub.title,
+        link: "https://leetcode.com/submissions/detail/" + sub.id,
+        difficulty: "Medium",
+        platform: "Leetcode"
+      });
+    }
+  });
+
+  return arr;
+}
+
+function fetchAtcoder(){
+
+  const username = "Aaqil";
+  let arr = [];
+
+  const url =
+    "https://kenkoooo.com/atcoder/atcoder-api/v3/user/submissions?user=" +
+    username +
+    "&from_second=0";
+
+  const response = UrlFetchApp.fetch(url);
+  const submissions = JSON.parse(response.getContentText());
+
+  submissions.forEach(sub => {
+
+    if(sub.result === "AC"){
+
+      arr.push({
+        date: new Date(sub.epoch_second*1000),
+        title: sub.problem_id,
+        link: "https://atcoder.jp/contests/" + sub.contest_id + "/submissions/" + sub.id,
+        difficulty: fetchAtcoderDifficulty(sub.problem_id),
+        platform: "Atcoder"
+      });
+    }
+  });
+
+  return arr;
+}
